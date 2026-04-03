@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Plus, Trash2, Trophy, LogOut, Loader2, UploadCloud, Download, Camera, Target, Activity, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
+import { Search, Plus, Trash2, Trophy, LogOut, Loader2, UploadCloud, Download, Camera, Target, Activity, ChevronUp, ChevronDown, RotateCcw, Github } from 'lucide-react';
 
 // ⚠️ 注意：本地部署时，请取消注释下面两行，并将假数据头像换回你的本地文件
 import * as htmlToImage from 'html-to-image';
@@ -720,36 +720,89 @@ export default function App() {
     setIsExporting(true);
 
     try {
+      // DataURL conversion for reliable html-to-image backgrounds
+      const getBase64Image = async (imgUrl) => {
+        try {
+          const res = await fetch(imgUrl);
+          const blob = await res.blob();
+          return new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.error("Failed to load bg image", e);
+          return imgUrl;
+        }
+      };
+
       const filter = (node) => {
-        if (node.tagName && node.getAttribute('data-html2canvas-ignore') === 'true') {
+        if (node.tagName && node.getAttribute && node.getAttribute('data-html2canvas-ignore') === 'true') {
           return false;
         }
         return true;
       };
 
+      // 增加画布宽度，确切留出左右边距，避免内容在边缘被无情裁切
+      const captureWidth = 1860;
+      const clone = captureRef.current.cloneNode(true);
+      clone.style.width = `${captureWidth}px`;
+      // clone.style.position = 'absolute';
+      // clone.style.top = '-9999px';
+      // clone.style.left = '-9999px';
+      // clone.style.padding = '10px -5000px';
+
+      const topGrid = clone.querySelector('#b30-grid-top');
+      if (topGrid) topGrid.className = "grid grid-cols-3 gap-6";
+
+      const overflowGrid = clone.querySelector('#b30-grid-overflow');
+      if (overflowGrid) overflowGrid.className = "grid grid-cols-3 gap-6 opacity-80";
+
+      const header = clone.querySelector('#b30-header');
+      if (header) header.className = "max-w-[1100px] mx-auto mb-10 pt-4 flex flex-row items-start justify-between relative";
+
+      const headerInfo = clone.querySelector('#b30-header-info');
+      if (headerInfo) headerInfo.className = "flex flex-col items-start space-y-2 mt-0";
+
+      document.body.appendChild(clone);
+      const targetHeight = clone.scrollHeight;
+      document.body.removeChild(clone);
+
+      // B30成绩图是标志性的竖长图结构 (比例约 1:2.5)
+      // 若使用电脑版的 16:9 宽屏壁纸进行竖向长图的 cover 拉伸，会引起强烈的放大和错位视觉感
+      // 强行锁定使用专用于纵排列的手机版原画 (bgMobileImage)，完美契合长图排版并解决放大错位问题
+      const actualBgImage = bgMobileImage;
+      const bgDataUrl = await getBase64Image(actualBgImage);
+
       const dataUrl = await htmlToImage.toPng(captureRef.current, {
         quality: 1.0,
         pixelRatio: 2,
-        backgroundColor: '#0f172a',
+        width: captureWidth,
+        height: targetHeight,
         imagePlaceholder: '',
         filter: filter,
-        width: 1180,
         style: {
-          width: '1180px',
-          padding: '40px',
+          width: `${captureWidth}px`,
+          height: `${targetHeight}px`,
+          padding: '40px 30px',
+          backgroundImage: `url(${bgDataUrl})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'top center',
+          backgroundColor: '#0f172a',
         },
-        onclone: (clonedDoc) => {
-          const header = clonedDoc.getElementById('b30-header');
-          if (header) header.className = "max-w-[1100px] mx-auto mb-10 pt-4 flex flex-row items-start justify-between relative";
+        onclone: (clonedNode) => {
+          // 注意：onclone 传入的是根克隆节点 (HTMLElement)，没有 getElementById 方法，必须用 querySelector
+          const qHeader = clonedNode.querySelector('#b30-header');
+          if (qHeader) qHeader.className = "max-w-[1100px] mx-auto mb-10 pt-4 flex flex-row items-start justify-between relative";
 
-          const headerInfo = clonedDoc.getElementById('b30-header-info');
-          if (headerInfo) headerInfo.className = "flex flex-col items-start space-y-2 mt-0";
+          const qHeaderInfo = clonedNode.querySelector('#b30-header-info');
+          if (qHeaderInfo) qHeaderInfo.className = "flex flex-col items-start space-y-2 mt-0";
 
-          const topGrid = clonedDoc.getElementById('b30-grid-top');
-          if (topGrid) topGrid.className = "grid grid-cols-3 gap-6";
+          const qTopGrid = clonedNode.querySelector('#b30-grid-top');
+          if (qTopGrid) qTopGrid.className = "grid grid-cols-3 gap-6";
 
-          const overflowGrid = clonedDoc.getElementById('b30-grid-overflow');
-          if (overflowGrid) overflowGrid.className = "grid grid-cols-3 gap-6 opacity-80";
+          const qOverflowGrid = clonedNode.querySelector('#b30-grid-overflow');
+          if (qOverflowGrid) qOverflowGrid.className = "grid grid-cols-3 gap-6 opacity-80";
         }
       });
 
@@ -869,11 +922,11 @@ export default function App() {
                 onError={(e) => {
                   // if (currentImage === bydCover) {
                   if (false) {
-                    setCurrentImage(defaultCover); 
-                  } 
-                  else { 
-                    e.target.style.display = 'none'; 
-                    e.target.nextSibling.style.display = 'block'; 
+                    setCurrentImage(defaultCover);
+                  }
+                  else {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'block';
                   }
                 }}
               />
@@ -973,7 +1026,7 @@ export default function App() {
 
   // ===================== 渲染主程序 =====================
   return (
-    <div className="min-h-screen text-slate-100 font-sans relative">
+    <div className="min-h-screen relative">
       {/* 【新增】：把背景单独抽离出来作为一个固定在底部的层
         使用 fixed inset-0 铺满屏幕，-z-10 沉在最底下
       */}
@@ -990,12 +1043,15 @@ export default function App() {
       */}
       <div
         ref={captureRef}
-        className="p-4 md:p-8 min-h-screen relative"
+        className="p-4 md:p-8 min-h-screen relative text-slate-100 font-sans"
       >
         <div className="absolute inset-0 bg-slate-900/60 pointer-events-none z-0"></div>
         <div id="b30-header" className="max-w-[1100px] mx-auto mb-10 pt-4 flex flex-col md:flex-row items-center md:items-start justify-between relative">
 
           <div className="absolute top-0 right-0 flex space-x-2" data-html2canvas-ignore="true">
+            <a href="https://github.com/ponder-j/Arcaea-b30-Local-Tracker" target="_blank" rel="noopener noreferrer" className="flex items-center text-slate-400 hover:text-blue-400 transition-colors text-sm px-3 py-1 rounded-md hover:bg-slate-800/50">
+              <Github className="w-4 h-4 mr-2" /> 项目链接
+            </a>
             <button
               onClick={handleExportImage}
               disabled={isExporting}
