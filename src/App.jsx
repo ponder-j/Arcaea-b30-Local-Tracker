@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Search, Plus, Trash2, Trophy, LogOut, Loader2, UploadCloud, Download, Camera, Target, Activity, ChevronUp, ChevronDown, RotateCcw, Github } from 'lucide-react';
 
 // ⚠️ 注意：本地部署时，请取消注释下面两行，并将假数据头像换回你的本地文件
@@ -234,7 +234,6 @@ const AdminDashboard = ({ token, userName, onLogout }) => {
           <button onClick={() => setActiveTab('bydName')} className={`px-4 py-2 rounded font-bold ${activeTab === 'bydName' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'}`}>4. 增加BYD曲名</button>
         </div>
 
-        {/* 账号管理和添加曲目的内容省略，保持原有逻辑 */}
         {activeTab === 'users' && (
           <div className="bg-slate-800 rounded-lg p-6 shadow-xl">
             <h2 className="text-xl mb-4 font-semibold text-white">平台注册玩家列表</h2>
@@ -481,6 +480,63 @@ export default function App() {
   const [hoveredCardId, setHoveredCardId] = useState(null);
   const [needsSort, setNeedsSort] = useState(false);
 
+  // 🌟 新增：动画列表引用容器，用于绑定基于 FLIP 的流畅重排动画
+  const listRef = useRef(null);
+  const prevPositions = useRef({});
+
+  // 🌟 新增：高性能 FLIP 动画系统（平滑交换位置）
+  useLayoutEffect(() => {
+    if (!listRef.current) return;
+    const cards = Array.from(listRef.current.querySelectorAll('[data-flip-key]'));
+    const newPositions = {};
+
+    // 1. First & Last: 记录每个卡片的最新目标位置
+    cards.forEach(card => {
+      const key = card.dataset.flipKey;
+      newPositions[key] = card.getBoundingClientRect();
+    });
+
+    // 2. Invert & Play: 计算位移差，重置并施加动画
+    cards.forEach(card => {
+      const key = card.dataset.flipKey;
+      if (key && prevPositions.current[key]) {
+        const prev = prevPositions.current[key];
+        const current = newPositions[key];
+
+        const deltaX = prev.left - current.left;
+        const deltaY = prev.top - current.top;
+
+        if (deltaX !== 0 || deltaY !== 0) {
+          // 伪装它还在原来的位置
+          card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+          card.style.transition = 'none';
+          card.style.zIndex = '50'; // 位移时确保它飘在最上方，不被周围元素压住
+
+          // 强制触发一次浏览器的重绘 (Reflow)
+          void card.offsetWidth;
+
+          // 启用位移动画，让它自动滑到正确位置
+          card.style.transform = 'translate(0, 0)';
+          card.style.transition = 'transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+          const handleTransitionEnd = (e) => {
+            if (e.propertyName === 'transform') {
+              card.style.transform = '';
+              card.style.transition = '';
+              card.style.zIndex = '';
+              card.removeEventListener('transitionend', handleTransitionEnd);
+            }
+          };
+          card.addEventListener('transitionend', handleTransitionEnd);
+        }
+      }
+    });
+
+    // 记录下来作为下一次判断的起点
+    prevPositions.current = newPositions;
+  }, [scores]); // 只要成绩顺序变动，就会自动触发重新计算与动画！
+
+
   const decodedToken = useMemo(() => {
     if (!token) return null;
     try {
@@ -498,47 +554,8 @@ export default function App() {
   const userName = decodedToken?.username || "";
   const isAdmin = decodedToken?.isAdmin === true;
 
-  // 🌟 核心：处理假定分数的模拟逻辑
-  // const handleSimulateScore = (id, delta, maxScore) => {
-  //   setScores(prev => {
-  //     const updatedScores = prev.map(s => {
-  //       if (s.id === id) {
-  //         const originalScore = s.originalScore || s.score;
-  //         let newScore = s.score + delta;
-  //         if (newScore > maxScore) newScore = maxScore;
-  //         if (newScore < 0) newScore = 0;
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-  //         return {
-  //           ...s,
-  //           score: newScore,
-  //           ptt: calculateSinglePtt(newScore, s.constant),
-  //           isSimulated: newScore !== originalScore,
-  //           originalScore: originalScore
-  //         };
-  //       }
-  //       return s;
-  //     });
-  //     // 模拟后需要重新根据 PTT 降序排序，挤压或提升 B30 的位置！
-  //     return updatedScores.sort((a, b) => b.ptt - a.ptt);
-  //   });
-  // };
-
-  // const handleResetSimulate = (id) => {
-  //   setScores(prev => {
-  //     const updatedScores = prev.map(s => {
-  //       if (s.id === id && s.originalScore !== undefined) {
-  //         return {
-  //           ...s,
-  //           score: s.originalScore,
-  //           ptt: calculateSinglePtt(s.originalScore, s.constant),
-  //           isSimulated: false
-  //         };
-  //       }
-  //       return s;
-  //     });
-  //     return updatedScores.sort((a, b) => b.ptt - a.ptt);
-  //   });
-  // };
   const handleSimulateScore = (id, delta, maxScore) => {
     setScores(prev => {
       const updatedScores = prev.map(s => {
@@ -558,9 +575,18 @@ export default function App() {
         }
         return s;
       });
-      return updatedScores; // 👈 这里去掉了 .sort(...)
+
+      // 🌟 移动端直接实时排序，电脑端不排序
+      if (isTouchDevice) {
+        return updatedScores.sort((a, b) => b.ptt - a.ptt);
+      }
+      return updatedScores;
     });
-    setNeedsSort(true); // 👈 通知系统需要排序了
+
+    // 🌟 只有电脑端才需要触发延迟排序的 Hook
+    if (!isTouchDevice) {
+      setNeedsSort(true);
+    }
   };
 
   const handleResetSimulate = (id) => {
@@ -576,12 +602,19 @@ export default function App() {
         }
         return s;
       });
-      return updatedScores; // 👈 这里去掉了 .sort(...)
+
+      if (isTouchDevice) {
+        return updatedScores.sort((a, b) => b.ptt - a.ptt);
+      }
+      return updatedScores;
     });
-    setNeedsSort(true); // 👈 通知系统需要排序了
+
+    if (!isTouchDevice) {
+      setNeedsSort(true);
+    }
   };
 
-  // 🌟 延后排序监听器
+  // 🌟 延后排序监听器 (电脑端鼠标移走后瞬间产生丝滑重新排列的视觉魔法！)
   useEffect(() => {
     if (needsSort && hoveredCardId === null) {
       setScores(prev => [...prev].sort((a, b) => b.ptt - a.ptt));
@@ -720,7 +753,6 @@ export default function App() {
     setIsExporting(true);
 
     try {
-      // DataURL conversion for reliable html-to-image backgrounds
       const getBase64Image = async (imgUrl) => {
         try {
           const res = await fetch(imgUrl);
@@ -743,14 +775,9 @@ export default function App() {
         return true;
       };
 
-      // 增加画布宽度，确切留出左右边距，避免内容在边缘被无情裁切
       const captureWidth = 1860;
       const clone = captureRef.current.cloneNode(true);
       clone.style.width = `${captureWidth}px`;
-      // clone.style.position = 'absolute';
-      // clone.style.top = '-9999px';
-      // clone.style.left = '-9999px';
-      // clone.style.padding = '10px -5000px';
 
       const topGrid = clone.querySelector('#b30-grid-top');
       if (topGrid) topGrid.className = "grid grid-cols-3 gap-6";
@@ -768,9 +795,6 @@ export default function App() {
       const targetHeight = clone.scrollHeight;
       document.body.removeChild(clone);
 
-      // B30成绩图是标志性的竖长图结构 (比例约 1:2.5)
-      // 若使用电脑版的 16:9 宽屏壁纸进行竖向长图的 cover 拉伸，会引起强烈的放大和错位视觉感
-      // 强行锁定使用专用于纵排列的手机版原画 (bgMobileImage)，完美契合长图排版并解决放大错位问题
       const actualBgImage = bgMobileImage;
       const bgDataUrl = await getBase64Image(actualBgImage);
 
@@ -784,14 +808,13 @@ export default function App() {
         style: {
           width: `${captureWidth}px`,
           height: `${targetHeight}px`,
-          padding: '40px 30px',
+          padding: '40px 70px',
           backgroundImage: `url(${bgDataUrl})`,
           backgroundSize: 'cover',
           backgroundPosition: 'top center',
           backgroundColor: '#0f172a',
         },
         onclone: (clonedNode) => {
-          // 注意：onclone 传入的是根克隆节点 (HTMLElement)，没有 getElementById 方法，必须用 querySelector
           const qHeader = clonedNode.querySelector('#b30-header');
           if (qHeader) qHeader.className = "max-w-[1100px] mx-auto mb-10 pt-4 flex flex-row items-start justify-between relative";
 
@@ -890,19 +913,13 @@ export default function App() {
     const coverBaseUrl = `${API_BASE_URL.replace('/api', '')}/covers`;
     const defaultCover = `${coverBaseUrl}/${score.song_id}.jpg`;
     const bydCover = `${coverBaseUrl}/${score.song_id}_byd.jpg`;
-    // const initialCover = score.difficulty === 'BYD' ? bydCover : defaultCover;
     const finalCover = (score.difficulty === 'BYD' && score.cover_url_byd) ? bydCover : defaultCover;
-
-    // const [currentImage, setCurrentImage] = useState(initialCover);
 
     const displaySongName = (score.difficulty === 'BYD' && score.name_byd) ? score.name_byd : score.song_name;
 
     const pfl = estimatePFL(score.score, score.notes);
 
-    // 🌟 计算此曲目的满分与每个 Far 扣除的分数，供模拟使用
     const maxScore = score.notes ? 10000000 + score.notes : 10002221;
-    // Arcaea 中，Far 会丢失一半的基础分外加1个判定分（判定分为基础分+1的那个1，所以差值是 baseNoteScore / 2 + 1）
-    // 简化：丢失分数大约为 (10000000 / notes) / 2 + 1
     const increment = score.notes ? Math.ceil((10000000 / score.notes) / 2) + 1 : null;
 
     return (
@@ -920,7 +937,6 @@ export default function App() {
                 alt={displaySongName}
                 className="w-full h-full object-cover"
                 onError={(e) => {
-                  // if (currentImage === bydCover) {
                   if (false) {
                     setCurrentImage(defaultCover);
                   }
@@ -966,7 +982,6 @@ export default function App() {
           <button onClick={() => handleDelete(score.id)} className="absolute bottom-2 right-2 p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-700 rounded transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
         </div>
 
-        {/* 🌟 用户要求的 侧边栏模拟按钮 */}
         <div className="w-8 flex-shrink-0 border-l border-slate-700 bg-slate-800/60 flex flex-col items-center justify-around py-1.5 shadow-inner z-10" data-html2canvas-ignore="true">
           <button onClick={() => increment && handleSimulateScore(score.id, increment, maxScore)} className="p-1 text-slate-400 hover:text-green-400 transition-colors" title="减少一个 Far，预览目标分数">
             <ChevronUp className="w-5 h-5" />
@@ -1027,9 +1042,6 @@ export default function App() {
   // ===================== 渲染主程序 =====================
   return (
     <div className="min-h-screen relative">
-      {/* 【新增】：把背景单独抽离出来作为一个固定在底部的层
-        使用 fixed inset-0 铺满屏幕，-z-10 沉在最底下
-      */}
       <div
         className="fixed inset-0 bg-cover bg-center -z-10 bg-[image:var(--bg-mobile)] md:bg-[image:var(--bg-pc)]"
         style={{
@@ -1038,9 +1050,6 @@ export default function App() {
         }}
       ></div>
 
-      {/* 【修改】：原来的内容层
-        去掉了背景图相关的 class 和 style，只保留 padding 和内容相关的样式 
-      */}
       <div
         ref={captureRef}
         className="p-4 md:p-8 min-h-screen relative text-slate-100 font-sans"
@@ -1178,14 +1187,18 @@ export default function App() {
           {errorMsg && <p className="text-red-400 mt-3 text-sm">{errorMsg}</p>}
         </div>
 
-        <div className="max-w-[1100px] mx-auto">
+        {/* 🌟 修改：为大容器绑定统一的 listRef，让 Top 30 和 Overflow 之间也能实现完美流转穿越 */}
+        <div className="max-w-[1100px] mx-auto" ref={listRef}>
           {isLoading ? (
             <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-purple-400" /></div>
           ) : (
             <>
               <div id="b30-grid-top" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {stats.top30.map((score, index) => (
-                  <ScoreCard key={`${score.id}-${score.difficulty}`} score={score} index={index + 1} />
+                  // 🌟 修改：多套一层不带样式的 div 作为固定“基座”，把动画隔离在外面，以免互相覆盖 transition-colors
+                  <div key={`${score.id}-${score.difficulty}`} data-flip-key={`${score.id}-${score.difficulty}`} className="relative block">
+                    <ScoreCard score={score} index={index + 1} />
+                  </div>
                 ))}
                 {stats.top30.length === 0 && (
                   <div className="col-span-full py-20 text-center text-slate-500">
@@ -1205,7 +1218,9 @@ export default function App() {
 
                   <div id="b30-grid-overflow" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-80">
                     {stats.overflow.map((score, index) => (
-                      <ScoreCard key={`${score.id}-${score.difficulty}`} score={score} index={index + 31} />
+                      <div key={`${score.id}-${score.difficulty}`} data-flip-key={`${score.id}-${score.difficulty}`} className="relative block">
+                        <ScoreCard score={score} index={index + 31} />
+                      </div>
                     ))}
                   </div>
 
